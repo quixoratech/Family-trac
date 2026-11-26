@@ -1,9 +1,11 @@
+
 name: Build FamilyTrack BD APK
 
 on:
   workflow_dispatch:
   push:
-    branches: [ "main" ]
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -12,6 +14,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -23,14 +26,18 @@ jobs:
           java-version: "21"
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
+        with:
+          packages: platform-tools
 
-      - name: Install Android SDK packages
+      - name: Install required Android SDK packages
         run: |
-          yes | sdkmanager --licenses
-          sdkmanager "platforms;android-36" "build-tools;36.1.0" "platform-tools"
+          sdkmanager --install \
+            "platforms;android-36" \
+            "build-tools;36.1.0" \
+            "platform-tools"
 
-      - name: Set up Gradle 9.3.1
+      - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "9.3.1"
@@ -46,7 +53,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Run unit tests (non-blocking)
+      - name: Run unit tests
         if: always()
         continue-on-error: true
         run: gradle --no-daemon :app:testDebugUnitTest
