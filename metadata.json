@@ -1,0 +1,6 @@
+{
+  "name": "FamilyTrack BD",
+  "description": "Consent-based family safety, offline-first location sync, messaging, voice calling, and multiplayer Tic-Tac-Toe.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

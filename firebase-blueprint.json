@@ -1,0 +1,471 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Private user account profile and selected role/language/privacy preferences.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "Firebase Auth UID matching document ID." },
+        "displayName": { "type": "string", "description": "User display name." },
+        "email": { "type": "string", "description": "User email address (private to owner)." },
+        "photoUrl": { "type": "string", "description": "Optional profile photo URL." },
+        "role": { "type": "string", "enum": ["ADMIN", "FAMILY"], "description": "Selected device role." },
+        "familyId": { "type": "string", "description": "Joined or owned family group ID." },
+        "deviceId": { "type": "string", "description": "Current phone installation device ID." },
+        "language": { "type": "string", "enum": ["en", "bn"], "description": "Preferred UI language." },
+        "lastSeenPrivacy": { "type": "string", "enum": ["EVERYONE", "ADMIN_ONLY", "NOBODY"] },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp on create." },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp on update." }
+      },
+      "required": ["userId", "displayName", "role", "language", "createdAt", "updatedAt"]
+    },
+    "FamilyGroup": {
+      "title": "FamilyGroup",
+      "description": "Family group owned by a single Admin account with bounded member UIDs.",
+      "type": "object",
+      "properties": {
+        "adminUid": { "type": "string", "description": "UID of the Admin who owns this family." },
+        "adminEmail": { "type": "string", "description": "Admin display email." },
+        "name": { "type": "string", "description": "Family group display name." },
+        "memberUids": { "type": "array", "description": "Bounded list of approved member UIDs (max 20)." },
+        "lastPairingCode": { "type": "string", "description": "Last pairing code claimed when joining." },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["adminUid", "name", "memberUids", "createdAt", "updatedAt"]
+    },
+    "PairingCode": {
+      "title": "PairingCode",
+      "description": "Expiring one-time QR or manual pairing code created by Admin.",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string" },
+        "familyId": { "type": "string" },
+        "adminUid": { "type": "string" },
+        "familyName": { "type": "string" },
+        "status": { "type": "string", "enum": ["ACTIVE", "USED", "REVOKED"] },
+        "usedByUid": { "type": "string" },
+        "usedByDeviceId": { "type": "string" },
+        "expiresAt": { "type": "string", "format": "date-time" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "usedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["code", "familyId", "adminUid", "familyName", "status", "expiresAt", "createdAt"]
+    },
+    "FamilyMember": {
+      "title": "FamilyMember",
+      "description": "Family member presence, availability, privacy, and contact entry.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "familyId": { "type": "string" },
+        "displayName": { "type": "string" },
+        "photoUrl": { "type": "string" },
+        "role": { "type": "string", "enum": ["ADMIN", "FAMILY"] },
+        "deviceId": { "type": "string" },
+        "online": { "type": "boolean" },
+        "lastSeenAtMs": { "type": "integer" },
+        "lastActiveAtMs": { "type": "integer" },
+        "lastSyncAtMs": { "type": "integer" },
+        "lastSeenPrivacy": { "type": "string", "enum": ["EVERYONE", "ADMIN_ONLY", "NOBODY"] },
+        "availability": { "type": "string", "enum": ["AVAILABLE", "BUSY", "AWAY", "OFFLINE"] },
+        "typingConversationId": { "type": "string" },
+        "typingActivity": { "type": "string", "enum": ["NONE", "TYPING", "RECORDING", "SENDING"] },
+        "typingUpdatedAtMs": { "type": "integer" },
+        "joinedAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "familyId", "displayName", "role", "deviceId", "online", "joinedAt", "updatedAt"]
+    },
+    "PairedDevice": {
+      "title": "PairedDevice",
+      "description": "Enrolled device with explicit consent, network monitoring state, telemetry, and Admin-only visibility.",
+      "type": "object",
+      "properties": {
+        "familyId": { "type": "string" },
+        "adminUid": { "type": "string" },
+        "ownerUid": { "type": "string" },
+        "ownerName": { "type": "string" },
+        "deviceName": { "type": "string" },
+        "deviceModel": { "type": "string" },
+        "androidVersion": { "type": "string" },
+        "role": { "type": "string", "enum": ["ADMIN", "FAMILY"] },
+        "consentGranted": { "type": "boolean" },
+        "consentTimestamp": { "type": "string", "format": "date-time" },
+        "networkConsentGranted": { "type": "boolean" },
+        "networkMonitoringEnabled": { "type": "boolean" },
+        "locationSharingEnabled": { "type": "boolean" },
+        "locationPermissionGranted": { "type": "boolean" },
+        "backgroundPermissionGranted": { "type": "boolean" },
+        "batteryPercent": { "type": "integer" },
+        "networkType": { "type": "string", "enum": ["WIFI", "CELLULAR", "OFFLINE", "OTHER"] },
+        "currentWifiAvailable": { "type": "boolean" },
+        "currentCellularAvailable": { "type": "boolean" },
+        "internetAvailable": { "type": "boolean" },
+        "currentNetworkSessionId": { "type": "string" },
+        "currentSessionStartedAtMs": { "type": "integer" },
+        "lastNetworkEventType": { "type": "string" },
+        "lastNetworkEventAtMs": { "type": "integer" },
+        "deviceHealth": { "type": "string" },
+        "online": { "type": "boolean" },
+        "revoked": { "type": "boolean" },
+        "lastLatitude": { "type": "number" },
+        "lastLongitude": { "type": "number" },
+        "lastAccuracyMeters": { "type": "number" },
+        "lastLocationAtMs": { "type": "integer" },
+        "lastSeenAtMs": { "type": "integer" },
+        "lastActiveAtMs": { "type": "integer" },
+        "lastSyncAtMs": { "type": "integer" },
+        "pairedAtMs": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "familyId", "adminUid", "ownerUid", "ownerName", "deviceName", "deviceModel",
+        "role", "consentGranted", "locationSharingEnabled", "locationPermissionGranted",
+        "backgroundPermissionGranted", "batteryPercent", "networkType", "online",
+        "revoked", "lastSeenAtMs", "lastSyncAtMs", "createdAt", "updatedAt"
+      ]
+    },
+    "LocationRecord": {
+      "title": "LocationRecord",
+      "description": "Idempotent GPS/Network location point synced from Room queue (7-day retention).",
+      "type": "object",
+      "properties": {
+        "familyId": { "type": "string" },
+        "adminUid": { "type": "string" },
+        "ownerUid": { "type": "string" },
+        "deviceId": { "type": "string" },
+        "latitude": { "type": "number" },
+        "longitude": { "type": "number" },
+        "accuracyMeters": { "type": "number" },
+        "altitudeMeters": { "type": "number" },
+        "speedMps": { "type": "number" },
+        "batteryPercent": { "type": "integer" },
+        "networkType": { "type": "string" },
+        "source": { "type": "string", "enum": ["FUSED", "GPS_PROVIDER", "NETWORK_PROVIDER"] },
+        "recordedAtMs": { "type": "integer" },
+        "syncedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "familyId", "adminUid", "ownerUid", "deviceId", "latitude", "longitude",
+        "accuracyMeters", "batteryPercent", "networkType", "source", "recordedAtMs", "syncedAt"
+      ]
+    },
+    "NetworkEvent": {
+      "title": "NetworkEvent",
+      "description": "Observed connectivity transition event from a consented family device.",
+      "type": "object",
+      "properties": {
+        "familyId": { "type": "string" },
+        "adminUid": { "type": "string" },
+        "ownerUid": { "type": "string" },
+        "deviceId": { "type": "string" },
+        "deviceName": { "type": "string" },
+        "eventType": { "type": "string" },
+        "networkType": { "type": "string", "enum": ["WIFI", "CELLULAR", "OFFLINE", "OTHER"] },
+        "connectionState": { "type": "string" },
+        "internetAvailable": { "type": "boolean" },
+        "eventTimestampMs": { "type": "integer" },
+        "detectedAtMs": { "type": "integer" },
+        "timezoneId": { "type": "string" },
+        "timezoneOffsetMinutes": { "type": "integer" },
+        "sessionId": { "type": "string" },
+        "details": { "type": "string" },
+        "uploadedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "familyId", "adminUid", "ownerUid", "deviceId", "deviceName", "eventType",
+        "networkType", "connectionState", "internetAvailable", "eventTimestampMs",
+        "detectedAtMs", "timezoneId", "timezoneOffsetMinutes", "uploadedAt"
+      ]
+    },
+    "NetworkSession": {
+      "title": "NetworkSession",
+      "description": "Observed network connectivity session with accurate start, end, duration, and status.",
+      "type": "object",
+      "properties": {
+        "familyId": { "type": "string" },
+        "adminUid": { "type": "string" },
+        "ownerUid": { "type": "string" },
+        "deviceId": { "type": "string" },
+        "deviceName": { "type": "string" },
+        "networkType": { "type": "string", "enum": ["WIFI", "CELLULAR", "OTHER"] },
+        "startedAtMs": { "type": "integer" },
+        "endedAtMs": { "type": "integer" },
+        "durationMs": { "type": "integer" },
+        "status": { "type": "string", "enum": ["ACTIVE", "COMPLETED", "INTERRUPTED", "UNKNOWN"] },
+        "lastVerifiedAtMs": { "type": "integer" },
+        "interruptionReason": { "type": "string" },
+        "timezoneId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": [
+        "familyId", "adminUid", "ownerUid", "deviceId", "deviceName", "networkType",
+        "startedAtMs", "status", "lastVerifiedAtMs", "timezoneId", "createdAt", "updatedAt"
+      ]
+    },
+    "Conversation": {
+      "title": "Conversation",
+      "description": "1-to-1 or Family Group chat thread with pin/mute/archive support.",
+      "type": "object",
+      "properties": {
+        "familyId": { "type": "string" },
+        "type": { "type": "string", "enum": ["DIRECT", "GROUP"] },
+        "title": { "type": "string" },
+        "participantUids": { "type": "array" },
+        "lastMessageText": { "type": "string" },
+        "lastMessageType": { "type": "string", "enum": ["TEXT", "VOICE", "IMAGE", "DOCUMENT"] },
+        "lastMessageSenderUid": { "type": "string" },
+        "lastMessageAtMs": { "type": "integer" },
+        "pinnedByUids": { "type": "array" },
+        "mutedByUids": { "type": "array" },
+        "archivedByUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["familyId", "type", "title", "participantUids", "lastMessageText", "lastMessageType", "lastMessageSenderUid", "lastMessageAtMs", "createdAt", "updatedAt"]
+    },
+    "ChatMessage": {
+      "title": "ChatMessage",
+      "description": "Text, voice, image, or document message with reply, reaction, edit, delete, and delivery receipts.",
+      "type": "object",
+      "properties": {
+        "conversationId": { "type": "string" },
+        "familyId": { "type": "string" },
+        "senderUid": { "type": "string" },
+        "senderName": { "type": "string" },
+        "participantUids": { "type": "array" },
+        "type": { "type": "string", "enum": ["TEXT", "VOICE", "IMAGE", "DOCUMENT"] },
+        "text": { "type": "string" },
+        "voiceAudioBase64": { "type": "string" },
+        "voiceDurationMs": { "type": "integer" },
+        "mediaBase64": { "type": "string" },
+        "fileName": { "type": "string" },
+        "mimeType": { "type": "string" },
+        "fileSizeBytes": { "type": "integer" },
+        "replyToMessageId": { "type": "string" },
+        "replyToPreview": { "type": "string" },
+        "reactions": { "type": "object" },
+        "editedAtMs": { "type": "integer" },
+        "deletedForAll": { "type": "boolean" },
+        "clientCreatedAtMs": { "type": "integer" },
+        "status": { "type": "string", "enum": ["SENT", "DELIVERED", "READ"] },
+        "deliveredToUids": { "type": "array" },
+        "readByUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["conversationId", "familyId", "senderUid", "senderName", "participantUids", "type", "text", "clientCreatedAtMs", "status", "readByUids", "createdAt", "updatedAt"]
+    },
+    "CallSession": {
+      "title": "CallSession",
+      "description": "WebRTC voice call signaling document.",
+      "type": "object",
+      "properties": {
+        "familyId": { "type": "string" },
+        "callerUid": { "type": "string" },
+        "callerName": { "type": "string" },
+        "calleeUid": { "type": "string" },
+        "calleeName": { "type": "string" },
+        "participantUids": { "type": "array" },
+        "status": { "type": "string", "enum": ["RINGING", "ACTIVE", "ENDED", "REJECTED", "MISSED"] },
+        "offerSdp": { "type": "string" },
+        "answerSdp": { "type": "string" },
+        "startedAtMs": { "type": "integer" },
+        "endedAtMs": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["familyId", "callerUid", "callerName", "calleeUid", "calleeName", "participantUids", "status", "startedAtMs", "createdAt", "updatedAt"]
+    },
+    "IceCandidate": {
+      "title": "IceCandidate",
+      "description": "WebRTC ICE candidate for peer connection negotiation.",
+      "type": "object",
+      "properties": {
+        "senderUid": { "type": "string" },
+        "participantUids": { "type": "array" },
+        "sdpMid": { "type": "string" },
+        "sdpMLineIndex": { "type": "integer" },
+        "candidate": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["senderUid", "participantUids", "sdpMid", "sdpMLineIndex", "candidate", "createdAt"]
+    },
+    "GameSession": {
+      "title": "GameSession",
+      "description": "Multiplayer Tic-Tac-Toe session between family members.",
+      "type": "object",
+      "properties": {
+        "familyId": { "type": "string" },
+        "playerXUid": { "type": "string" },
+        "playerXName": { "type": "string" },
+        "playerOUid": { "type": "string" },
+        "playerOName": { "type": "string" },
+        "participantUids": { "type": "array" },
+        "board": { "type": "array" },
+        "currentTurn": { "type": "string", "enum": ["X", "O"] },
+        "status": { "type": "string", "enum": ["WAITING", "ACTIVE", "X_WON", "O_WON", "DRAW"] },
+        "winnerUid": { "type": "string" },
+        "moveCount": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["familyId", "playerXUid", "playerXName", "playerOUid", "playerOName", "participantUids", "board", "currentTurn", "status", "moveCount", "createdAt", "updatedAt"]
+    },
+    "GameMove": {
+      "title": "GameMove",
+      "description": "Individual move record inside a Tic-Tac-Toe session.",
+      "type": "object",
+      "properties": {
+        "gameId": { "type": "string" },
+        "playerUid": { "type": "string" },
+        "symbol": { "type": "string", "enum": ["X", "O"] },
+        "cellIndex": { "type": "integer" },
+        "moveNumber": { "type": "integer" },
+        "participantUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["gameId", "playerUid", "symbol", "cellIndex", "moveNumber", "participantUids", "createdAt"]
+    },
+    "FamilyNotification": {
+      "title": "FamilyNotification",
+      "description": "In-app notification event for paired family members.",
+      "type": "object",
+      "properties": {
+        "familyId": { "type": "string" },
+        "targetUid": { "type": "string" },
+        "senderUid": { "type": "string" },
+        "title": { "type": "string" },
+        "body": { "type": "string" },
+        "type": { "type": "string", "enum": ["MESSAGE", "CALL", "GAME", "PAIRING", "CONSENT", "ANNOUNCEMENT", "TASK", "CALENDAR", "DEVICE", "SYNC_ERROR"] },
+        "seen": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["familyId", "targetUid", "senderUid", "title", "body", "type", "seen", "createdAt"]
+    },
+    "FamilyCalendarEvent": {
+      "title": "FamilyCalendarEvent",
+      "description": "Shared family calendar event with recurrence and reminder support.",
+      "type": "object",
+      "properties": {
+        "familyId": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "startAtMs": { "type": "integer" },
+        "endAtMs": { "type": "integer" },
+        "recurrence": { "type": "string", "enum": ["NONE", "DAILY", "WEEKLY", "MONTHLY"] },
+        "reminderMinutesBefore": { "type": "integer" },
+        "participantUids": { "type": "array" },
+        "createdByUid": { "type": "string" },
+        "createdByName": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["familyId", "title", "startAtMs", "recurrence", "reminderMinutesBefore", "participantUids", "createdByUid", "createdByName", "createdAt", "updatedAt"]
+    },
+    "FamilyTask": {
+      "title": "FamilyTask",
+      "description": "Shared family task with assignment, priority, due date, and completion tracking.",
+      "type": "object",
+      "properties": {
+        "familyId": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "assignedToUid": { "type": "string" },
+        "assignedToName": { "type": "string" },
+        "priority": { "type": "string", "enum": ["LOW", "MEDIUM", "HIGH"] },
+        "dueAtMs": { "type": "integer" },
+        "completed": { "type": "boolean" },
+        "completedAtMs": { "type": "integer" },
+        "completedByUid": { "type": "string" },
+        "createdByUid": { "type": "string" },
+        "createdByName": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["familyId", "title", "assignedToUid", "assignedToName", "priority", "completed", "createdByUid", "createdByName", "createdAt", "updatedAt"]
+    },
+    "FamilyExpense": {
+      "title": "FamilyExpense",
+      "description": "BDT family expense tracking item with category and payer.",
+      "type": "object",
+      "properties": {
+        "familyId": { "type": "string" },
+        "title": { "type": "string" },
+        "category": { "type": "string" },
+        "amountBdt": { "type": "number" },
+        "paidByUid": { "type": "string" },
+        "paidByName": { "type": "string" },
+        "expenseDateMs": { "type": "integer" },
+        "notes": { "type": "string" },
+        "createdByUid": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["familyId", "title", "category", "amountBdt", "paidByUid", "paidByName", "expenseDateMs", "createdByUid", "createdAt", "updatedAt"]
+    },
+    "FamilyNotice": {
+      "title": "FamilyNotice",
+      "description": "Admin-published family announcement with pin, expiry, and read confirmation.",
+      "type": "object",
+      "properties": {
+        "familyId": { "type": "string" },
+        "title": { "type": "string" },
+        "body": { "type": "string" },
+        "pinned": { "type": "boolean" },
+        "expiresAtMs": { "type": "integer" },
+        "readByUids": { "type": "array" },
+        "authorUid": { "type": "string" },
+        "authorName": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["familyId", "title", "body", "pinned", "readByUids", "authorUid", "authorName", "createdAt", "updatedAt"]
+    },
+    "FamilyVaultFile": {
+      "title": "FamilyVaultFile",
+      "description": "Private access-controlled family document stored in the family vault.",
+      "type": "object",
+      "properties": {
+        "familyId": { "type": "string" },
+        "title": { "type": "string" },
+        "folder": { "type": "string" },
+        "fileName": { "type": "string" },
+        "mimeType": { "type": "string" },
+        "fileSizeBytes": { "type": "integer" },
+        "fileBase64": { "type": "string" },
+        "uploadedByUid": { "type": "string" },
+        "uploadedByName": { "type": "string" },
+        "allowedUids": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["familyId", "title", "folder", "fileName", "mimeType", "fileSizeBytes", "fileBase64", "uploadedByUid", "uploadedByName", "allowedUids", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": { "schema": { "$ref": "#/entities/UserProfile" }, "description": "Private user account profile." },
+    "/families/{familyId}": { "schema": { "$ref": "#/entities/FamilyGroup" }, "description": "Family groups managed by an Admin." },
+    "/pairing_codes/{code}": { "schema": { "$ref": "#/entities/PairingCode" }, "description": "Expiring one-time QR and manual pairing codes." },
+    "/families/{familyId}/members/{memberUid}": { "schema": { "$ref": "#/entities/FamilyMember" }, "description": "Family member contacts & presence." },
+    "/families/{familyId}/devices/{deviceId}": { "schema": { "$ref": "#/entities/PairedDevice" }, "description": "Paired device status, consent, network state, and telemetry (Admin & owner only)." },
+    "/families/{familyId}/locations/{recordId}": { "schema": { "$ref": "#/entities/LocationRecord" }, "description": "7-day location history records (Admin & owner only)." },
+    "/families/{familyId}/network_events/{eventId}": { "schema": { "$ref": "#/entities/NetworkEvent" }, "description": "Observed network connectivity events (Admin & owner only)." },
+    "/families/{familyId}/network_sessions/{sessionId}": { "schema": { "$ref": "#/entities/NetworkSession" }, "description": "Network connectivity sessions with durations (Admin & owner only)." },
+    "/families/{familyId}/conversations/{conversationId}": { "schema": { "$ref": "#/entities/Conversation" }, "description": "1-to-1 and family group conversations." },
+    "/families/{familyId}/conversations/{conversationId}/messages/{messageId}": { "schema": { "$ref": "#/entities/ChatMessage" }, "description": "Rich messages inside a conversation." },
+    "/families/{familyId}/calls/{callId}": { "schema": { "$ref": "#/entities/CallSession" }, "description": "WebRTC voice call signaling sessions." },
+    "/families/{familyId}/calls/{callId}/candidates/{candidateId}": { "schema": { "$ref": "#/entities/IceCandidate" }, "description": "WebRTC ICE candidates for a call." },
+    "/families/{familyId}/games/{gameId}": { "schema": { "$ref": "#/entities/GameSession" }, "description": "Multiplayer Tic-Tac-Toe game sessions." },
+    "/families/{familyId}/games/{gameId}/moves/{moveId}": { "schema": { "$ref": "#/entities/GameMove" }, "description": "Sequential moves for Tic-Tac-Toe." },
+    "/families/{familyId}/notifications/{notificationId}": { "schema": { "$ref": "#/entities/FamilyNotification" }, "description": "Targeted family notifications." },
+    "/families/{familyId}/calendar_events/{eventId}": { "schema": { "$ref": "#/entities/FamilyCalendarEvent" }, "description": "Shared family calendar events." },
+    "/families/{familyId}/tasks/{taskId}": { "schema": { "$ref": "#/entities/FamilyTask" }, "description": "Shared family tasks." },
+    "/families/{familyId}/expenses/{expenseId}": { "schema": { "$ref": "#/entities/FamilyExpense" }, "description": "Shared family BDT expense tracker records." },
+    "/families/{familyId}/notices/{noticeId}": { "schema": { "$ref": "#/entities/FamilyNotice" }, "description": "Admin notice board announcements." },
+    "/families/{familyId}/vault_files/{fileId}": { "schema": { "$ref": "#/entities/FamilyVaultFile" }, "description": "Access-controlled private family document vault." }
+  }
+}

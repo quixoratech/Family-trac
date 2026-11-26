@@ -1,0 +1,990 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- GLOBAL HELPERS ---
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+    function incoming() {
+      return request.resource.data;
+    }
+    function existing() {
+      return resource.data;
+    }
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    function isAuthorizedAdminEmail() {
+      return isSignedIn() &&
+        ('email' in request.auth.token) &&
+        request.auth.token.email is string &&
+        request.auth.token.email.lower() == 'quixoratech@gmail.com';
+    }
+    function isValidTimestamp(ts) {
+      return ts is timestamp && ts <= request.time;
+    }
+    function isValidString(val, minLen, maxLen) {
+      return val is string && val.size() >= minLen && val.size() <= maxLen;
+    }
+    function isBoundedUidList(list, maxLen) {
+      return list is list && list.size() >= 1 && list.size() <= maxLen && list[0] is string;
+    }
+    function isOptionalUidList(list, maxLen) {
+      return list is list && list.size() <= maxLen;
+    }
+    function isFamilyMember(familyId) {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/families/$(familyId)) &&
+        request.auth.uid in get(/databases/$(database)/documents/families/$(familyId)).data.memberUids;
+    }
+    function isFamilyAdmin(familyId) {
+      return isAuthorizedAdminEmail() &&
+        exists(/databases/$(database)/documents/families/$(familyId)) &&
+        get(/databases/$(database)/documents/families/$(familyId)).data.adminUid == request.auth.uid;
+    }
+
+    // --- VALIDATION HELPERS ---
+    function isValidUserProfile(data) {
+      return isValidString(data.userId, 1, 128) &&
+        isValidString(data.displayName, 1, 80) &&
+        (!('email' in data) || isValidString(data.email, 0, 160)) &&
+        (!('photoUrl' in data) || isValidString(data.photoUrl, 0, 500)) &&
+        data.role in ['ADMIN', 'FAMILY'] &&
+        (!('familyId' in data) || isValidId(data.familyId)) &&
+        (!('deviceId' in data) || isValidId(data.deviceId)) &&
+        data.language in ['en', 'bn'] &&
+        (!('lastSeenPrivacy' in data) || data.lastSeenPrivacy in ['EVERYONE', 'ADMIN_ONLY', 'NOBODY']);
+    }
+
+    function isValidFamilyGroup(data) {
+      return isValidString(data.adminUid, 1, 128) &&
+        (!('adminEmail' in data) || isValidString(data.adminEmail, 0, 160)) &&
+        isValidString(data.name, 1, 80) &&
+        isBoundedUidList(data.memberUids, 20) &&
+        (!('lastPairingCode' in data) || isValidId(data.lastPairingCode));
+    }
+
+    function isValidPairingCode(data) {
+      return isValidId(data.code) &&
+        isValidId(data.familyId) &&
+        isValidString(data.adminUid, 1, 128) &&
+        isValidString(data.familyName, 1, 80) &&
+        data.status in ['ACTIVE', 'USED', 'REVOKED'] &&
+        data.expiresAt is timestamp &&
+        (!('usedByUid' in data) || isValidString(data.usedByUid, 1, 128)) &&
+        (!('usedByDeviceId' in data) || isValidId(data.usedByDeviceId)) &&
+        (!('usedAt' in data) || isValidTimestamp(data.usedAt));
+    }
+
+    function isValidFamilyMember(data) {
+      return isValidString(data.uid, 1, 128) &&
+        isValidId(data.familyId) &&
+        isValidString(data.displayName, 1, 80) &&
+        (!('photoUrl' in data) || isValidString(data.photoUrl, 0, 500)) &&
+        data.role in ['ADMIN', 'FAMILY'] &&
+        isValidId(data.deviceId) &&
+        data.online is bool &&
+        (!('lastSeenAtMs' in data) || (data.lastSeenAtMs is int && data.lastSeenAtMs >= 0)) &&
+        (!('lastActiveAtMs' in data) || (data.lastActiveAtMs is int && data.lastActiveAtMs >= 0)) &&
+        (!('lastSyncAtMs' in data) || (data.lastSyncAtMs is int && data.lastSyncAtMs >= 0)) &&
+        (!('lastSeenPrivacy' in data) || data.lastSeenPrivacy in ['EVERYONE', 'ADMIN_ONLY', 'NOBODY']) &&
+        (!('availability' in data) || data.availability in ['AVAILABLE', 'BUSY', 'AWAY', 'OFFLINE']) &&
+        (!('typingConversationId' in data) || isValidString(data.typingConversationId, 0, 128)) &&
+        (!('typingActivity' in data) || data.typingActivity in ['NONE', 'TYPING', 'RECORDING', 'SENDING']) &&
+        (!('typingUpdatedAtMs' in data) || (data.typingUpdatedAtMs is int && data.typingUpdatedAtMs >= 0));
+    }
+
+    function isValidPairedDevice(data) {
+      return isValidId(data.familyId) &&
+        isValidString(data.adminUid, 1, 128) &&
+        isValidString(data.ownerUid, 1, 128) &&
+        isValidString(data.ownerName, 1, 80) &&
+        isValidString(data.deviceName, 1, 80) &&
+        isValidString(data.deviceModel, 1, 80) &&
+        (!('androidVersion' in data) || isValidString(data.androidVersion, 0, 40)) &&
+        data.role in ['ADMIN', 'FAMILY'] &&
+        data.consentGranted is bool &&
+        (!('consentTimestamp' in data) || isValidTimestamp(data.consentTimestamp)) &&
+        (!('networkConsentGranted' in data) || data.networkConsentGranted is bool) &&
+        (!('networkMonitoringEnabled' in data) || data.networkMonitoringEnabled is bool) &&
+        data.locationSharingEnabled is bool &&
+        data.locationPermissionGranted is bool &&
+        data.backgroundPermissionGranted is bool &&
+        data.batteryPercent is int && data.batteryPercent >= 0 && data.batteryPercent <= 100 &&
+        data.networkType in ['WIFI', 'CELLULAR', 'OFFLINE', 'OTHER'] &&
+        (!('currentWifiAvailable' in data) || data.currentWifiAvailable is bool) &&
+        (!('currentCellularAvailable' in data) || data.currentCellularAvailable is bool) &&
+        (!('internetAvailable' in data) || data.internetAvailable is bool) &&
+        (!('currentNetworkSessionId' in data) || isValidString(data.currentNetworkSessionId, 0, 128)) &&
+        (!('currentSessionStartedAtMs' in data) || (data.currentSessionStartedAtMs is int && data.currentSessionStartedAtMs >= 0)) &&
+        (!('lastNetworkEventType' in data) || isValidString(data.lastNetworkEventType, 0, 64)) &&
+        (!('lastNetworkEventAtMs' in data) || (data.lastNetworkEventAtMs is int && data.lastNetworkEventAtMs >= 0)) &&
+        (!('deviceHealth' in data) || isValidString(data.deviceHealth, 0, 80)) &&
+        data.online is bool &&
+        data.revoked is bool &&
+        (!('lastLatitude' in data) || (data.lastLatitude is number && data.lastLatitude >= -90 && data.lastLatitude <= 90)) &&
+        (!('lastLongitude' in data) || (data.lastLongitude is number && data.lastLongitude >= -180 && data.lastLongitude <= 180)) &&
+        (!('lastAccuracyMeters' in data) || (data.lastAccuracyMeters is number && data.lastAccuracyMeters >= 0 && data.lastAccuracyMeters <= 100000)) &&
+        (!('lastLocationAtMs' in data) || (data.lastLocationAtMs is int && data.lastLocationAtMs >= 0)) &&
+        data.lastSeenAtMs is int && data.lastSeenAtMs >= 0 &&
+        (!('lastActiveAtMs' in data) || (data.lastActiveAtMs is int && data.lastActiveAtMs >= 0)) &&
+        data.lastSyncAtMs is int && data.lastSyncAtMs >= 0 &&
+        (!('pairedAtMs' in data) || (data.pairedAtMs is int && data.pairedAtMs >= 0));
+    }
+
+    function isValidLocationRecord(data) {
+      return isValidId(data.familyId) &&
+        isValidString(data.adminUid, 1, 128) &&
+        isValidString(data.ownerUid, 1, 128) &&
+        isValidId(data.deviceId) &&
+        data.latitude is number && data.latitude >= -90 && data.latitude <= 90 &&
+        data.longitude is number && data.longitude >= -180 && data.longitude <= 180 &&
+        data.accuracyMeters is number && data.accuracyMeters >= 0 && data.accuracyMeters <= 100000 &&
+        (!('altitudeMeters' in data) || data.altitudeMeters is number) &&
+        (!('speedMps' in data) || (data.speedMps is number && data.speedMps >= 0)) &&
+        data.batteryPercent is int && data.batteryPercent >= 0 && data.batteryPercent <= 100 &&
+        data.networkType in ['WIFI', 'CELLULAR', 'OFFLINE', 'OTHER'] &&
+        data.source in ['FUSED', 'GPS_PROVIDER', 'NETWORK_PROVIDER'] &&
+        data.recordedAtMs is int && data.recordedAtMs > 0;
+    }
+
+    function isValidNetworkEvent(data) {
+      return isValidId(data.familyId) &&
+        isValidString(data.adminUid, 1, 128) &&
+        isValidString(data.ownerUid, 1, 128) &&
+        isValidId(data.deviceId) &&
+        isValidString(data.deviceName, 1, 80) &&
+        data.eventType in [
+          'INTERNET_AVAILABLE', 'INTERNET_UNAVAILABLE',
+          'WIFI_AVAILABLE', 'WIFI_DISCONNECTED',
+          'CELLULAR_AVAILABLE', 'CELLULAR_DISCONNECTED',
+          'NETWORK_CHANGED', 'NETWORK_VALIDATED',
+          'SWITCHED_WIFI_TO_CELLULAR', 'SWITCHED_CELLULAR_TO_WIFI',
+          'SYNC_STARTED', 'SYNC_COMPLETED', 'SYNC_FAILED',
+          'MONITORING_STARTED', 'MONITORING_PAUSED', 'DEVICE_BOOTED'
+        ] &&
+        data.networkType in ['WIFI', 'CELLULAR', 'OFFLINE', 'OTHER'] &&
+        isValidString(data.connectionState, 1, 40) &&
+        data.internetAvailable is bool &&
+        data.eventTimestampMs is int && data.eventTimestampMs > 0 &&
+        data.detectedAtMs is int && data.detectedAtMs > 0 &&
+        isValidString(data.timezoneId, 1, 64) &&
+        data.timezoneOffsetMinutes is int && data.timezoneOffsetMinutes >= -840 && data.timezoneOffsetMinutes <= 840 &&
+        (!('sessionId' in data) || isValidString(data.sessionId, 0, 128)) &&
+        (!('details' in data) || isValidString(data.details, 0, 300));
+    }
+
+    function isValidNetworkSession(data) {
+      return isValidId(data.familyId) &&
+        isValidString(data.adminUid, 1, 128) &&
+        isValidString(data.ownerUid, 1, 128) &&
+        isValidId(data.deviceId) &&
+        isValidString(data.deviceName, 1, 80) &&
+        data.networkType in ['WIFI', 'CELLULAR', 'OTHER'] &&
+        data.startedAtMs is int && data.startedAtMs > 0 &&
+        (!('endedAtMs' in data) || (data.endedAtMs is int && data.endedAtMs >= data.startedAtMs)) &&
+        (!('durationMs' in data) || (data.durationMs is int && data.durationMs >= 0)) &&
+        data.status in ['ACTIVE', 'COMPLETED', 'INTERRUPTED', 'UNKNOWN'] &&
+        data.lastVerifiedAtMs is int && data.lastVerifiedAtMs >= 0 &&
+        (!('interruptionReason' in data) || isValidString(data.interruptionReason, 0, 200)) &&
+        isValidString(data.timezoneId, 1, 64);
+    }
+
+    function isValidConversation(data) {
+      return isValidId(data.familyId) &&
+        data.type in ['DIRECT', 'GROUP'] &&
+        isValidString(data.title, 1, 100) &&
+        isBoundedUidList(data.participantUids, 20) &&
+        isValidString(data.lastMessageText, 0, 500) &&
+        data.lastMessageType in ['TEXT', 'VOICE', 'IMAGE', 'DOCUMENT'] &&
+        isValidString(data.lastMessageSenderUid, 0, 128) &&
+        data.lastMessageAtMs is int && data.lastMessageAtMs >= 0 &&
+        (!('pinnedByUids' in data) || isOptionalUidList(data.pinnedByUids, 20)) &&
+        (!('mutedByUids' in data) || isOptionalUidList(data.mutedByUids, 20)) &&
+        (!('archivedByUids' in data) || isOptionalUidList(data.archivedByUids, 20));
+    }
+
+    function isValidChatMessage(data) {
+      return isValidId(data.conversationId) &&
+        isValidId(data.familyId) &&
+        isValidString(data.senderUid, 1, 128) &&
+        isValidString(data.senderName, 1, 80) &&
+        isBoundedUidList(data.participantUids, 20) &&
+        data.type in ['TEXT', 'VOICE', 'IMAGE', 'DOCUMENT'] &&
+        isValidString(data.text, 0, 2000) &&
+        (!('voiceAudioBase64' in data) || isValidString(data.voiceAudioBase64, 1, 600000)) &&
+        (!('voiceDurationMs' in data) || (data.voiceDurationMs is int && data.voiceDurationMs >= 0 && data.voiceDurationMs <= 120000)) &&
+        (!('mediaBase64' in data) || isValidString(data.mediaBase64, 1, 750000)) &&
+        (!('fileName' in data) || isValidString(data.fileName, 1, 160)) &&
+        (!('mimeType' in data) || isValidString(data.mimeType, 1, 120)) &&
+        (!('fileSizeBytes' in data) || (data.fileSizeBytes is int && data.fileSizeBytes >= 0 && data.fileSizeBytes <= 1048576)) &&
+        (!('replyToMessageId' in data) || isValidString(data.replyToMessageId, 1, 128)) &&
+        (!('replyToPreview' in data) || isValidString(data.replyToPreview, 0, 200)) &&
+        (!('reactions' in data) || (data.reactions is map && data.reactions.size() <= 20)) &&
+        (!('editedAtMs' in data) || (data.editedAtMs is int && data.editedAtMs > 0)) &&
+        (!('deletedForAll' in data) || data.deletedForAll is bool) &&
+        data.clientCreatedAtMs is int && data.clientCreatedAtMs > 0 &&
+        data.status in ['SENT', 'DELIVERED', 'READ'] &&
+        (!('deliveredToUids' in data) || isOptionalUidList(data.deliveredToUids, 20)) &&
+        isBoundedUidList(data.readByUids, 20);
+    }
+
+    function isValidCallSession(data) {
+      return isValidId(data.familyId) &&
+        isValidString(data.callerUid, 1, 128) &&
+        isValidString(data.callerName, 1, 80) &&
+        isValidString(data.calleeUid, 1, 128) &&
+        isValidString(data.calleeName, 1, 80) &&
+        data.participantUids is list && data.participantUids.size() == 2 &&
+        data.status in ['RINGING', 'ACTIVE', 'ENDED', 'REJECTED', 'MISSED'] &&
+        (!('offerSdp' in data) || isValidString(data.offerSdp, 0, 30000)) &&
+        (!('answerSdp' in data) || isValidString(data.answerSdp, 0, 30000)) &&
+        data.startedAtMs is int && data.startedAtMs > 0 &&
+        (!('endedAtMs' in data) || (data.endedAtMs is int && data.endedAtMs >= 0));
+    }
+
+    function isValidIceCandidate(data) {
+      return isValidString(data.senderUid, 1, 128) &&
+        data.participantUids is list && data.participantUids.size() == 2 &&
+        isValidString(data.sdpMid, 0, 128) &&
+        data.sdpMLineIndex is int && data.sdpMLineIndex >= 0 && data.sdpMLineIndex <= 32 &&
+        isValidString(data.candidate, 1, 2000);
+    }
+
+    function isValidGameSession(data) {
+      return isValidId(data.familyId) &&
+        isValidString(data.playerXUid, 1, 128) &&
+        isValidString(data.playerXName, 1, 80) &&
+        isValidString(data.playerOUid, 1, 128) &&
+        isValidString(data.playerOName, 1, 80) &&
+        data.participantUids is list && data.participantUids.size() == 2 &&
+        data.board is list && data.board.size() == 9 &&
+        data.board[0] in ['', 'X', 'O'] &&
+        data.currentTurn in ['X', 'O'] &&
+        data.status in ['WAITING', 'ACTIVE', 'X_WON', 'O_WON', 'DRAW'] &&
+        (!('winnerUid' in data) || isValidString(data.winnerUid, 0, 128)) &&
+        data.moveCount is int && data.moveCount >= 0 && data.moveCount <= 9;
+    }
+
+    function isValidGameMove(data) {
+      return isValidId(data.gameId) &&
+        isValidString(data.playerUid, 1, 128) &&
+        data.symbol in ['X', 'O'] &&
+        data.cellIndex is int && data.cellIndex >= 0 && data.cellIndex <= 8 &&
+        data.moveNumber is int && data.moveNumber >= 1 && data.moveNumber <= 9 &&
+        data.participantUids is list && data.participantUids.size() == 2;
+    }
+
+    function isValidNotification(data) {
+      return isValidId(data.familyId) &&
+        isValidString(data.targetUid, 1, 128) &&
+        isValidString(data.senderUid, 1, 128) &&
+        isValidString(data.title, 1, 120) &&
+        isValidString(data.body, 1, 400) &&
+        data.type in ['MESSAGE', 'CALL', 'GAME', 'PAIRING', 'CONSENT', 'ANNOUNCEMENT', 'TASK', 'CALENDAR', 'DEVICE', 'SYNC_ERROR'] &&
+        data.seen is bool;
+    }
+
+    function isValidCalendarEvent(data) {
+      return isValidId(data.familyId) &&
+        isValidString(data.title, 1, 120) &&
+        (!('description' in data) || isValidString(data.description, 0, 500)) &&
+        data.startAtMs is int && data.startAtMs > 0 &&
+        (!('endAtMs' in data) || (data.endAtMs is int && data.endAtMs >= data.startAtMs)) &&
+        data.recurrence in ['NONE', 'DAILY', 'WEEKLY', 'MONTHLY'] &&
+        data.reminderMinutesBefore is int && data.reminderMinutesBefore >= 0 && data.reminderMinutesBefore <= 10080 &&
+        isBoundedUidList(data.participantUids, 20) &&
+        isValidString(data.createdByUid, 1, 128) &&
+        isValidString(data.createdByName, 1, 80);
+    }
+
+    function isValidFamilyTask(data) {
+      return isValidId(data.familyId) &&
+        isValidString(data.title, 1, 120) &&
+        (!('description' in data) || isValidString(data.description, 0, 500)) &&
+        isValidString(data.assignedToUid, 1, 128) &&
+        isValidString(data.assignedToName, 1, 80) &&
+        data.priority in ['LOW', 'MEDIUM', 'HIGH'] &&
+        (!('dueAtMs' in data) || (data.dueAtMs is int && data.dueAtMs >= 0)) &&
+        data.completed is bool &&
+        (!('completedAtMs' in data) || (data.completedAtMs is int && data.completedAtMs >= 0)) &&
+        (!('completedByUid' in data) || isValidString(data.completedByUid, 0, 128)) &&
+        isValidString(data.createdByUid, 1, 128) &&
+        isValidString(data.createdByName, 1, 80);
+    }
+
+    function isValidFamilyExpense(data) {
+      return isValidId(data.familyId) &&
+        isValidString(data.title, 1, 120) &&
+        isValidString(data.category, 1, 60) &&
+        data.amountBdt is number && data.amountBdt > 0 && data.amountBdt <= 100000000 &&
+        isValidString(data.paidByUid, 1, 128) &&
+        isValidString(data.paidByName, 1, 80) &&
+        data.expenseDateMs is int && data.expenseDateMs > 0 &&
+        (!('notes' in data) || isValidString(data.notes, 0, 300)) &&
+        isValidString(data.createdByUid, 1, 128);
+    }
+
+    function isValidFamilyNotice(data) {
+      return isValidId(data.familyId) &&
+        isValidString(data.title, 1, 120) &&
+        isValidString(data.body, 1, 1500) &&
+        data.pinned is bool &&
+        (!('expiresAtMs' in data) || (data.expiresAtMs is int && data.expiresAtMs >= 0)) &&
+        isOptionalUidList(data.readByUids, 20) &&
+        isValidString(data.authorUid, 1, 128) &&
+        isValidString(data.authorName, 1, 80);
+    }
+
+    function isValidVaultFile(data) {
+      return isValidId(data.familyId) &&
+        isValidString(data.title, 1, 120) &&
+        isValidString(data.folder, 1, 60) &&
+        isValidString(data.fileName, 1, 160) &&
+        isValidString(data.mimeType, 1, 120) &&
+        data.fileSizeBytes is int && data.fileSizeBytes > 0 && data.fileSizeBytes <= 600000 &&
+        isValidString(data.fileBase64, 1, 820000) &&
+        isValidString(data.uploadedByUid, 1, 128) &&
+        isValidString(data.uploadedByName, 1, 80) &&
+        isBoundedUidList(data.allowedUids, 20);
+    }
+
+    // --- 1. PRIVATE USER PROFILES ---
+    match /users/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+      allow list: if isSignedIn() && request.auth.uid == userId;
+      allow create: if isSignedIn() && isValidId(userId) &&
+        request.auth.uid == userId &&
+        incoming().userId == request.auth.uid &&
+        (incoming().role != 'ADMIN' || isAuthorizedAdminEmail()) &&
+        incoming().keys().hasAll(['userId', 'displayName', 'role', 'language', 'createdAt', 'updatedAt']) &&
+        incoming().keys().hasOnly(['userId', 'displayName', 'email', 'photoUrl', 'role', 'familyId', 'deviceId', 'language', 'lastSeenPrivacy', 'createdAt', 'updatedAt']) &&
+        isValidUserProfile(incoming()) &&
+        isValidTimestamp(incoming().createdAt) &&
+        isValidTimestamp(incoming().updatedAt);
+      allow update: if isSignedIn() && isValidId(userId) &&
+        isValidUserProfile(incoming()) &&
+        request.auth.uid == userId &&
+        (incoming().role != 'ADMIN' || isAuthorizedAdminEmail()) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        isValidTimestamp(incoming().updatedAt) &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email', 'photoUrl', 'role', 'familyId', 'deviceId', 'language', 'lastSeenPrivacy', 'updatedAt']);
+      allow delete: if isSignedIn() && isValidId(userId) && request.auth.uid == userId;
+    }
+
+    // --- 2. PAIRING CODES (ONE-TIME EXPIRING) ---
+    match /pairing_codes/{code} {
+      allow get: if isSignedIn() && isValidId(code);
+      allow list: if isAuthorizedAdminEmail() && existing().adminUid == request.auth.uid;
+      allow create: if isAuthorizedAdminEmail() && isValidId(code) &&
+        incoming().code == code &&
+        incoming().adminUid == request.auth.uid &&
+        incoming().status == 'ACTIVE' &&
+        incoming().keys().hasAll(['code', 'familyId', 'adminUid', 'familyName', 'status', 'expiresAt', 'createdAt']) &&
+        incoming().keys().hasOnly(['code', 'familyId', 'adminUid', 'familyName', 'status', 'expiresAt', 'createdAt', 'usedByUid', 'usedByDeviceId', 'usedAt']) &&
+        isValidPairingCode(incoming()) &&
+        isValidTimestamp(incoming().createdAt) &&
+        isFamilyAdmin(incoming().familyId);
+      allow update: if isSignedIn() && isValidId(code) &&
+        isValidPairingCode(incoming()) &&
+        incoming().code == existing().code &&
+        incoming().familyId == existing().familyId &&
+        incoming().adminUid == existing().adminUid &&
+        incoming().createdAt == existing().createdAt && (
+          (existing().adminUid == request.auth.uid &&
+           existing().status == 'ACTIVE' &&
+           incoming().status == 'REVOKED' &&
+           incoming().diff(existing()).affectedKeys().hasOnly(['status'])) ||
+          (existing().status == 'ACTIVE' &&
+           existing().expiresAt > request.time &&
+           incoming().status == 'USED' &&
+           incoming().usedByUid == request.auth.uid &&
+           incoming().diff(existing()).affectedKeys().hasOnly(['status', 'usedByUid', 'usedByDeviceId', 'usedAt']) &&
+           isValidTimestamp(incoming().usedAt))
+        );
+      allow delete: if isSignedIn() && isValidId(code) && existing().adminUid == request.auth.uid;
+    }
+
+    // --- 3. FAMILY GROUPS & SUBCOLLECTIONS ---
+    match /families/{familyId} {
+      allow get: if isSignedIn() && isValidId(familyId) &&
+        (existing().adminUid == request.auth.uid || request.auth.uid in existing().memberUids);
+      allow list: if isSignedIn() &&
+        (existing().adminUid == request.auth.uid || request.auth.uid in existing().memberUids);
+      allow create: if isAuthorizedAdminEmail() && isValidId(familyId) &&
+        incoming().adminUid == request.auth.uid &&
+        incoming().memberUids is list &&
+        incoming().memberUids.size() == 1 &&
+        incoming().memberUids[0] == request.auth.uid &&
+        incoming().keys().hasAll(['adminUid', 'name', 'memberUids', 'createdAt', 'updatedAt']) &&
+        incoming().keys().hasOnly(['adminUid', 'adminEmail', 'name', 'memberUids', 'lastPairingCode', 'createdAt', 'updatedAt']) &&
+        isValidFamilyGroup(incoming()) &&
+        isValidTimestamp(incoming().createdAt) &&
+        isValidTimestamp(incoming().updatedAt);
+      allow update: if isSignedIn() && isValidId(familyId) &&
+        isValidFamilyGroup(incoming()) &&
+        incoming().adminUid == existing().adminUid &&
+        incoming().createdAt == existing().createdAt &&
+        isValidTimestamp(incoming().updatedAt) && (
+          (isAuthorizedAdminEmail() &&
+           existing().adminUid == request.auth.uid &&
+           request.auth.uid in incoming().memberUids &&
+           incoming().diff(existing()).affectedKeys().hasOnly(['name', 'memberUids', 'updatedAt'])) ||
+          (incoming().diff(existing()).affectedKeys().hasOnly(['memberUids', 'lastPairingCode', 'updatedAt']) &&
+           'lastPairingCode' in incoming() &&
+           isValidId(incoming().lastPairingCode) &&
+           !(request.auth.uid in existing().memberUids) &&
+           request.auth.uid in incoming().memberUids &&
+           incoming().memberUids.size() == existing().memberUids.size() + 1 &&
+           incoming().memberUids.hasAll(existing().memberUids) &&
+           get(/databases/$(database)/documents/pairing_codes/$(incoming().lastPairingCode)).data.familyId == familyId &&
+           get(/databases/$(database)/documents/pairing_codes/$(incoming().lastPairingCode)).data.status == 'ACTIVE' &&
+           get(/databases/$(database)/documents/pairing_codes/$(incoming().lastPairingCode)).data.expiresAt > request.time &&
+           getAfter(/databases/$(database)/documents/pairing_codes/$(incoming().lastPairingCode)).data.status == 'USED' &&
+           getAfter(/databases/$(database)/documents/pairing_codes/$(incoming().lastPairingCode)).data.usedByUid == request.auth.uid)
+        );
+      allow delete: if isAuthorizedAdminEmail() && isValidId(familyId) && existing().adminUid == request.auth.uid;
+
+      // 3a. Family member contacts & presence
+      match /members/{memberUid} {
+        allow get: if isSignedIn() && isValidId(memberUid) && isFamilyMember(familyId);
+        allow list: if isFamilyMember(familyId);
+        allow create: if isSignedIn() && isValidId(memberUid) &&
+          incoming().uid == request.auth.uid &&
+          memberUid == request.auth.uid &&
+          incoming().familyId == familyId &&
+          incoming().keys().hasAll(['uid', 'familyId', 'displayName', 'role', 'deviceId', 'online', 'joinedAt', 'updatedAt']) &&
+          incoming().keys().hasOnly([
+            'uid', 'familyId', 'displayName', 'photoUrl', 'role', 'deviceId', 'online',
+            'lastSeenAtMs', 'lastActiveAtMs', 'lastSyncAtMs', 'lastSeenPrivacy', 'availability',
+            'typingConversationId', 'typingActivity', 'typingUpdatedAtMs', 'joinedAt', 'updatedAt'
+          ]) &&
+          isValidFamilyMember(incoming()) &&
+          isValidTimestamp(incoming().joinedAt) &&
+          isValidTimestamp(incoming().updatedAt) &&
+          (isFamilyAdmin(familyId) ||
+           request.auth.uid in getAfter(/databases/$(database)/documents/families/$(familyId)).data.memberUids);
+        allow update: if isSignedIn() && isValidId(memberUid) &&
+          isValidFamilyMember(incoming()) &&
+          incoming().uid == existing().uid &&
+          incoming().familyId == existing().familyId &&
+          incoming().joinedAt == existing().joinedAt &&
+          isValidTimestamp(incoming().updatedAt) &&
+          request.auth.uid == memberUid &&
+          isFamilyMember(familyId) &&
+          incoming().role == existing().role &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'displayName', 'photoUrl', 'deviceId', 'online',
+            'lastSeenAtMs', 'lastActiveAtMs', 'lastSyncAtMs', 'lastSeenPrivacy', 'availability',
+            'typingConversationId', 'typingActivity', 'typingUpdatedAtMs', 'updatedAt'
+          ]);
+        allow delete: if isSignedIn() && isValidId(memberUid) &&
+          (isFamilyAdmin(familyId) || request.auth.uid == memberUid);
+      }
+
+      // 3b. Paired Devices (STRICT: Authorized Admin Email or Device Owner ONLY)
+      match /devices/{deviceId} {
+        allow get: if isSignedIn() && isValidId(deviceId) &&
+          ((isAuthorizedAdminEmail() && existing().adminUid == request.auth.uid) || existing().ownerUid == request.auth.uid);
+        allow list: if isSignedIn() &&
+          ((isAuthorizedAdminEmail() && existing().adminUid == request.auth.uid) || existing().ownerUid == request.auth.uid);
+        allow create: if isSignedIn() && isValidId(deviceId) &&
+          incoming().familyId == familyId &&
+          incoming().ownerUid == request.auth.uid &&
+          incoming().adminUid == get(/databases/$(database)/documents/families/$(familyId)).data.adminUid &&
+          incoming().revoked == false &&
+          (incoming().role != 'ADMIN' || isAuthorizedAdminEmail()) &&
+          incoming().keys().hasAll([
+            'familyId', 'adminUid', 'ownerUid', 'ownerName', 'deviceName', 'deviceModel',
+            'role', 'consentGranted', 'locationSharingEnabled', 'locationPermissionGranted',
+            'backgroundPermissionGranted', 'batteryPercent', 'networkType', 'online',
+            'revoked', 'lastSeenAtMs', 'lastSyncAtMs', 'createdAt', 'updatedAt'
+          ]) &&
+          incoming().keys().hasOnly([
+            'familyId', 'adminUid', 'ownerUid', 'ownerName', 'deviceName', 'deviceModel', 'androidVersion',
+            'role', 'consentGranted', 'consentTimestamp', 'networkConsentGranted', 'networkMonitoringEnabled',
+            'locationSharingEnabled', 'locationPermissionGranted', 'backgroundPermissionGranted',
+            'batteryPercent', 'networkType', 'currentWifiAvailable', 'currentCellularAvailable',
+            'internetAvailable', 'currentNetworkSessionId', 'currentSessionStartedAtMs',
+            'lastNetworkEventType', 'lastNetworkEventAtMs', 'deviceHealth',
+            'online', 'revoked', 'lastLatitude', 'lastLongitude',
+            'lastAccuracyMeters', 'lastLocationAtMs', 'lastSeenAtMs', 'lastActiveAtMs', 'lastSyncAtMs',
+            'pairedAtMs', 'createdAt', 'updatedAt'
+          ]) &&
+          isValidPairedDevice(incoming()) &&
+          isValidTimestamp(incoming().createdAt) &&
+          isValidTimestamp(incoming().updatedAt) &&
+          (isFamilyAdmin(familyId) ||
+           request.auth.uid in getAfter(/databases/$(database)/documents/families/$(familyId)).data.memberUids);
+        allow update: if isSignedIn() && isValidId(deviceId) &&
+          isValidPairedDevice(incoming()) &&
+          incoming().familyId == existing().familyId &&
+          incoming().adminUid == existing().adminUid &&
+          incoming().ownerUid == existing().ownerUid &&
+          incoming().createdAt == existing().createdAt &&
+          isValidTimestamp(incoming().updatedAt) && (
+            // Admin can rename or revoke device
+            (isAuthorizedAdminEmail() &&
+             existing().adminUid == request.auth.uid &&
+             incoming().diff(existing()).affectedKeys().hasOnly(['deviceName', 'revoked', 'updatedAt'])) ||
+            // Owner updates device status/consent/network/telemetry (cannot un-revoke!)
+            (existing().ownerUid == request.auth.uid &&
+             existing().revoked == false &&
+             incoming().revoked == false &&
+             incoming().diff(existing()).affectedKeys().hasOnly([
+               'ownerName', 'deviceName', 'androidVersion', 'consentGranted', 'consentTimestamp',
+               'networkConsentGranted', 'networkMonitoringEnabled',
+               'locationSharingEnabled', 'locationPermissionGranted', 'backgroundPermissionGranted',
+               'batteryPercent', 'networkType', 'currentWifiAvailable', 'currentCellularAvailable',
+               'internetAvailable', 'currentNetworkSessionId', 'currentSessionStartedAtMs',
+               'lastNetworkEventType', 'lastNetworkEventAtMs', 'deviceHealth',
+               'online', 'lastLatitude', 'lastLongitude',
+               'lastAccuracyMeters', 'lastLocationAtMs', 'lastSeenAtMs', 'lastActiveAtMs', 'lastSyncAtMs', 'updatedAt'
+             ]))
+          );
+        allow delete: if isSignedIn() && isValidId(deviceId) &&
+          ((isAuthorizedAdminEmail() && existing().adminUid == request.auth.uid) || existing().ownerUid == request.auth.uid);
+      }
+
+      // 3c. Location Records (STRICT: Authorized Admin Email or Owner ONLY; immutable after upload)
+      match /locations/{recordId} {
+        allow get: if isSignedIn() && isValidId(recordId) &&
+          ((isAuthorizedAdminEmail() && existing().adminUid == request.auth.uid) || existing().ownerUid == request.auth.uid);
+        allow list: if isSignedIn() &&
+          ((isAuthorizedAdminEmail() && existing().adminUid == request.auth.uid) || existing().ownerUid == request.auth.uid);
+        allow create: if isSignedIn() && isValidId(recordId) &&
+          incoming().familyId == familyId &&
+          incoming().ownerUid == request.auth.uid &&
+          incoming().adminUid == get(/databases/$(database)/documents/families/$(familyId)).data.adminUid &&
+          incoming().keys().hasAll([
+            'familyId', 'adminUid', 'ownerUid', 'deviceId', 'latitude', 'longitude',
+            'accuracyMeters', 'batteryPercent', 'networkType', 'source', 'recordedAtMs', 'syncedAt'
+          ]) &&
+          incoming().keys().hasOnly([
+            'familyId', 'adminUid', 'ownerUid', 'deviceId', 'latitude', 'longitude',
+            'accuracyMeters', 'altitudeMeters', 'speedMps', 'batteryPercent',
+            'networkType', 'source', 'recordedAtMs', 'syncedAt'
+          ]) &&
+          isValidLocationRecord(incoming()) &&
+          isValidTimestamp(incoming().syncedAt) &&
+          isFamilyMember(familyId);
+        allow update: if false;
+        allow delete: if isSignedIn() && isValidId(recordId) &&
+          ((isAuthorizedAdminEmail() && existing().adminUid == request.auth.uid) || existing().ownerUid == request.auth.uid);
+      }
+
+      // 3c-2. Network Events (STRICT: Authorized Admin Email or Device Owner ONLY; immutable after upload)
+      match /network_events/{eventId} {
+        allow get: if isSignedIn() && isValidId(eventId) &&
+          ((isAuthorizedAdminEmail() && existing().adminUid == request.auth.uid) || existing().ownerUid == request.auth.uid);
+        allow list: if isSignedIn() &&
+          ((isAuthorizedAdminEmail() && existing().adminUid == request.auth.uid) || existing().ownerUid == request.auth.uid);
+        allow create: if isSignedIn() && isValidId(eventId) &&
+          incoming().familyId == familyId &&
+          incoming().ownerUid == request.auth.uid &&
+          incoming().adminUid == get(/databases/$(database)/documents/families/$(familyId)).data.adminUid &&
+          incoming().keys().hasAll([
+            'familyId', 'adminUid', 'ownerUid', 'deviceId', 'deviceName', 'eventType',
+            'networkType', 'connectionState', 'internetAvailable', 'eventTimestampMs',
+            'detectedAtMs', 'timezoneId', 'timezoneOffsetMinutes', 'uploadedAt'
+          ]) &&
+          incoming().keys().hasOnly([
+            'familyId', 'adminUid', 'ownerUid', 'deviceId', 'deviceName', 'eventType',
+            'networkType', 'connectionState', 'internetAvailable', 'eventTimestampMs',
+            'detectedAtMs', 'timezoneId', 'timezoneOffsetMinutes', 'sessionId', 'details', 'uploadedAt'
+          ]) &&
+          isValidNetworkEvent(incoming()) &&
+          isValidTimestamp(incoming().uploadedAt) &&
+          isFamilyMember(familyId);
+        allow update: if false;
+        allow delete: if isSignedIn() && isValidId(eventId) &&
+          ((isAuthorizedAdminEmail() && existing().adminUid == request.auth.uid) || existing().ownerUid == request.auth.uid);
+      }
+
+      // 3c-3. Network Sessions (STRICT: Authorized Admin Email or Device Owner ONLY)
+      match /network_sessions/{sessionId} {
+        allow get: if isSignedIn() && isValidId(sessionId) &&
+          ((isAuthorizedAdminEmail() && existing().adminUid == request.auth.uid) || existing().ownerUid == request.auth.uid);
+        allow list: if isSignedIn() &&
+          ((isAuthorizedAdminEmail() && existing().adminUid == request.auth.uid) || existing().ownerUid == request.auth.uid);
+        allow create: if isSignedIn() && isValidId(sessionId) &&
+          incoming().familyId == familyId &&
+          incoming().ownerUid == request.auth.uid &&
+          incoming().adminUid == get(/databases/$(database)/documents/families/$(familyId)).data.adminUid &&
+          incoming().keys().hasAll([
+            'familyId', 'adminUid', 'ownerUid', 'deviceId', 'deviceName', 'networkType',
+            'startedAtMs', 'status', 'lastVerifiedAtMs', 'timezoneId', 'createdAt', 'updatedAt'
+          ]) &&
+          incoming().keys().hasOnly([
+            'familyId', 'adminUid', 'ownerUid', 'deviceId', 'deviceName', 'networkType',
+            'startedAtMs', 'endedAtMs', 'durationMs', 'status', 'lastVerifiedAtMs',
+            'interruptionReason', 'timezoneId', 'createdAt', 'updatedAt'
+          ]) &&
+          isValidNetworkSession(incoming()) &&
+          isValidTimestamp(incoming().createdAt) &&
+          isValidTimestamp(incoming().updatedAt) &&
+          isFamilyMember(familyId);
+        allow update: if isSignedIn() && isValidId(sessionId) &&
+          isValidNetworkSession(incoming()) &&
+          existing().ownerUid == request.auth.uid &&
+          incoming().familyId == existing().familyId &&
+          incoming().adminUid == existing().adminUid &&
+          incoming().ownerUid == existing().ownerUid &&
+          incoming().deviceId == existing().deviceId &&
+          incoming().startedAtMs == existing().startedAtMs &&
+          incoming().createdAt == existing().createdAt &&
+          isValidTimestamp(incoming().updatedAt) &&
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'endedAtMs', 'durationMs', 'status', 'lastVerifiedAtMs', 'interruptionReason', 'updatedAt'
+          ]);
+        allow delete: if isSignedIn() && isValidId(sessionId) &&
+          ((isAuthorizedAdminEmail() && existing().adminUid == request.auth.uid) || existing().ownerUid == request.auth.uid);
+      }
+
+      // 3d. Conversations & Messages
+      match /conversations/{conversationId} {
+        allow get: if isSignedIn() && isValidId(conversationId) &&
+          request.auth.uid in existing().participantUids;
+        allow list: if isSignedIn() &&
+          request.auth.uid in existing().participantUids;
+        allow create: if isSignedIn() && isValidId(conversationId) &&
+          request.auth.uid in incoming().participantUids &&
+          incoming().familyId == familyId &&
+          incoming().keys().hasAll(['familyId', 'type', 'title', 'participantUids', 'lastMessageText', 'lastMessageType', 'lastMessageSenderUid', 'lastMessageAtMs', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly([
+            'familyId', 'type', 'title', 'participantUids', 'lastMessageText', 'lastMessageType',
+            'lastMessageSenderUid', 'lastMessageAtMs', 'pinnedByUids', 'mutedByUids', 'archivedByUids',
+            'createdAt', 'updatedAt'
+          ]) &&
+          isValidConversation(incoming()) &&
+          isValidTimestamp(incoming().createdAt) &&
+          isValidTimestamp(incoming().updatedAt) &&
+          isFamilyMember(familyId);
+        allow update: if isSignedIn() && isValidId(conversationId) &&
+          isValidConversation(incoming()) &&
+          incoming().familyId == existing().familyId &&
+          incoming().type == existing().type &&
+          incoming().createdAt == existing().createdAt &&
+          isValidTimestamp(incoming().updatedAt) && (
+            (request.auth.uid in existing().participantUids &&
+             incoming().diff(existing()).affectedKeys().hasOnly([
+               'title', 'participantUids', 'lastMessageText', 'lastMessageType',
+               'lastMessageSenderUid', 'lastMessageAtMs',
+               'pinnedByUids', 'mutedByUids', 'archivedByUids', 'updatedAt'
+             ])) ||
+            (existing().type == 'GROUP' &&
+             isFamilyMember(familyId) &&
+             request.auth.uid in incoming().participantUids &&
+             incoming().participantUids.hasAll(existing().participantUids) &&
+             incoming().diff(existing()).affectedKeys().hasOnly(['participantUids', 'updatedAt']))
+          );
+        allow delete: if isSignedIn() && isValidId(conversationId) && isFamilyAdmin(familyId);
+
+        match /messages/{messageId} {
+          allow get: if isSignedIn() && isValidId(messageId) &&
+            request.auth.uid in existing().participantUids;
+          allow list: if isSignedIn() &&
+            request.auth.uid in existing().participantUids;
+          allow create: if isSignedIn() && isValidId(messageId) &&
+            incoming().familyId == familyId &&
+            incoming().conversationId == conversationId &&
+            incoming().senderUid == request.auth.uid &&
+            request.auth.uid in incoming().participantUids &&
+            incoming().keys().hasAll(['conversationId', 'familyId', 'senderUid', 'senderName', 'participantUids', 'type', 'text', 'clientCreatedAtMs', 'status', 'readByUids', 'createdAt', 'updatedAt']) &&
+            incoming().keys().hasOnly([
+              'conversationId', 'familyId', 'senderUid', 'senderName', 'participantUids',
+              'type', 'text', 'voiceAudioBase64', 'voiceDurationMs',
+              'mediaBase64', 'fileName', 'mimeType', 'fileSizeBytes',
+              'replyToMessageId', 'replyToPreview', 'reactions', 'editedAtMs', 'deletedForAll',
+              'clientCreatedAtMs', 'status', 'deliveredToUids', 'readByUids', 'createdAt', 'updatedAt'
+            ]) &&
+            isValidChatMessage(incoming()) &&
+            isValidTimestamp(incoming().createdAt) &&
+            isValidTimestamp(incoming().updatedAt);
+          allow update: if isSignedIn() && isValidId(messageId) &&
+            isValidChatMessage(incoming()) &&
+            request.auth.uid in existing().participantUids &&
+            incoming().conversationId == existing().conversationId &&
+            incoming().familyId == existing().familyId &&
+            incoming().senderUid == existing().senderUid &&
+            incoming().createdAt == existing().createdAt &&
+            isValidTimestamp(incoming().updatedAt) && (
+              // Any participant can update delivery/read receipts and reactions
+              incoming().diff(existing()).affectedKeys().hasOnly(['status', 'deliveredToUids', 'readByUids', 'reactions', 'updatedAt']) ||
+              // Sender can edit text or mark deletedForAll
+              (existing().senderUid == request.auth.uid &&
+               incoming().diff(existing()).affectedKeys().hasOnly(['text', 'editedAtMs', 'deletedForAll', 'updatedAt']))
+            );
+          allow delete: if isSignedIn() && isValidId(messageId) &&
+            (existing().senderUid == request.auth.uid || isFamilyAdmin(familyId));
+        }
+      }
+
+      // 3e. WebRTC Voice Call Signaling
+      match /calls/{callId} {
+        allow get: if isSignedIn() && isValidId(callId) &&
+          request.auth.uid in existing().participantUids;
+        allow list: if isSignedIn() &&
+          request.auth.uid in existing().participantUids;
+        allow create: if isSignedIn() && isValidId(callId) &&
+          incoming().familyId == familyId &&
+          incoming().callerUid == request.auth.uid &&
+          request.auth.uid in incoming().participantUids &&
+          incoming().status == 'RINGING' &&
+          incoming().keys().hasAll(['familyId', 'callerUid', 'callerName', 'calleeUid', 'calleeName', 'participantUids', 'status', 'startedAtMs', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['familyId', 'callerUid', 'callerName', 'calleeUid', 'calleeName', 'participantUids', 'status', 'offerSdp', 'answerSdp', 'startedAtMs', 'endedAtMs', 'createdAt', 'updatedAt']) &&
+          isValidCallSession(incoming()) &&
+          isValidTimestamp(incoming().createdAt) &&
+          isValidTimestamp(incoming().updatedAt) &&
+          isFamilyMember(familyId);
+        allow update: if isSignedIn() && isValidId(callId) &&
+          isValidCallSession(incoming()) &&
+          request.auth.uid in existing().participantUids &&
+          incoming().familyId == existing().familyId &&
+          incoming().callerUid == existing().callerUid &&
+          incoming().calleeUid == existing().calleeUid &&
+          incoming().createdAt == existing().createdAt &&
+          isValidTimestamp(incoming().updatedAt) &&
+          !(existing().status in ['ENDED', 'REJECTED', 'MISSED']) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'offerSdp', 'answerSdp', 'endedAtMs', 'updatedAt']);
+        allow delete: if isSignedIn() && isValidId(callId) &&
+          request.auth.uid in existing().participantUids;
+
+        match /candidates/{candidateId} {
+          allow get: if isSignedIn() && isValidId(candidateId) &&
+            request.auth.uid in existing().participantUids;
+          allow list: if isSignedIn() &&
+            request.auth.uid in existing().participantUids;
+          allow create: if isSignedIn() && isValidId(candidateId) &&
+            incoming().senderUid == request.auth.uid &&
+            request.auth.uid in incoming().participantUids &&
+            incoming().keys().hasAll(['senderUid', 'participantUids', 'sdpMid', 'sdpMLineIndex', 'candidate', 'createdAt']) &&
+            incoming().keys().hasOnly(['senderUid', 'participantUids', 'sdpMid', 'sdpMLineIndex', 'candidate', 'createdAt']) &&
+            isValidIceCandidate(incoming()) &&
+            isValidTimestamp(incoming().createdAt);
+          allow update: if false;
+          allow delete: if isSignedIn() && isValidId(candidateId) &&
+            request.auth.uid in existing().participantUids;
+        }
+      }
+
+      // 3f. Multiplayer Tic-Tac-Toe
+      match /games/{gameId} {
+        allow get: if isSignedIn() && isValidId(gameId) &&
+          request.auth.uid in existing().participantUids;
+        allow list: if isSignedIn() &&
+          request.auth.uid in existing().participantUids;
+        allow create: if isSignedIn() && isValidId(gameId) &&
+          incoming().familyId == familyId &&
+          request.auth.uid in incoming().participantUids &&
+          incoming().keys().hasAll(['familyId', 'playerXUid', 'playerXName', 'playerOUid', 'playerOName', 'participantUids', 'board', 'currentTurn', 'status', 'moveCount', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['familyId', 'playerXUid', 'playerXName', 'playerOUid', 'playerOName', 'participantUids', 'board', 'currentTurn', 'status', 'winnerUid', 'moveCount', 'createdAt', 'updatedAt']) &&
+          isValidGameSession(incoming()) &&
+          isValidTimestamp(incoming().createdAt) &&
+          isValidTimestamp(incoming().updatedAt) &&
+          isFamilyMember(familyId);
+        allow update: if isSignedIn() && isValidId(gameId) &&
+          isValidGameSession(incoming()) &&
+          request.auth.uid in existing().participantUids &&
+          incoming().familyId == existing().familyId &&
+          incoming().playerXUid == existing().playerXUid &&
+          incoming().playerOUid == existing().playerOUid &&
+          incoming().createdAt == existing().createdAt &&
+          isValidTimestamp(incoming().updatedAt) && (
+            (!(existing().status in ['X_WON', 'O_WON', 'DRAW']) &&
+             ((existing().currentTurn == 'X' && request.auth.uid == existing().playerXUid) ||
+              (existing().currentTurn == 'O' && request.auth.uid == existing().playerOUid)) &&
+             incoming().diff(existing()).affectedKeys().hasOnly(['board', 'currentTurn', 'status', 'winnerUid', 'moveCount', 'updatedAt'])) ||
+            (incoming().moveCount == 0 &&
+             incoming().status == 'ACTIVE' &&
+             incoming().diff(existing()).affectedKeys().hasOnly(['board', 'currentTurn', 'status', 'winnerUid', 'moveCount', 'updatedAt']))
+          );
+        allow delete: if isSignedIn() && isValidId(gameId) &&
+          (request.auth.uid in existing().participantUids || isFamilyAdmin(familyId));
+
+        match /moves/{moveId} {
+          allow get: if isSignedIn() && isValidId(moveId) &&
+            request.auth.uid in existing().participantUids;
+          allow list: if isSignedIn() &&
+            request.auth.uid in existing().participantUids;
+          allow create: if isSignedIn() && isValidId(moveId) &&
+            incoming().gameId == gameId &&
+            incoming().playerUid == request.auth.uid &&
+            request.auth.uid in incoming().participantUids &&
+            incoming().keys().hasAll(['gameId', 'playerUid', 'symbol', 'cellIndex', 'moveNumber', 'participantUids', 'createdAt']) &&
+            incoming().keys().hasOnly(['gameId', 'playerUid', 'symbol', 'cellIndex', 'moveNumber', 'participantUids', 'createdAt']) &&
+            isValidGameMove(incoming()) &&
+            isValidTimestamp(incoming().createdAt);
+          allow update: if false;
+          allow delete: if isSignedIn() && isValidId(moveId) &&
+            request.auth.uid in existing().participantUids;
+        }
+      }
+
+      // 3g. Targeted Family Notifications
+      match /notifications/{notificationId} {
+        allow get: if isSignedIn() && isValidId(notificationId) &&
+          (existing().targetUid == request.auth.uid || existing().senderUid == request.auth.uid);
+        allow list: if isSignedIn() && existing().targetUid == request.auth.uid;
+        allow create: if isSignedIn() && isValidId(notificationId) &&
+          incoming().familyId == familyId &&
+          incoming().senderUid == request.auth.uid &&
+          incoming().keys().hasAll(['familyId', 'targetUid', 'senderUid', 'title', 'body', 'type', 'seen', 'createdAt']) &&
+          incoming().keys().hasOnly(['familyId', 'targetUid', 'senderUid', 'title', 'body', 'type', 'seen', 'createdAt']) &&
+          isValidNotification(incoming()) &&
+          isValidTimestamp(incoming().createdAt) &&
+          isFamilyMember(familyId);
+        allow update: if isSignedIn() && isValidId(notificationId) &&
+          isValidNotification(incoming()) &&
+          existing().targetUid == request.auth.uid &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['seen']);
+        allow delete: if isSignedIn() && isValidId(notificationId) &&
+          existing().targetUid == request.auth.uid;
+      }
+
+      // 3h. Shared Family Calendar
+      match /calendar_events/{eventId} {
+        allow get: if isSignedIn() && isValidId(eventId) && isFamilyMember(familyId);
+        allow list: if isFamilyMember(familyId);
+        allow create: if isSignedIn() && isValidId(eventId) &&
+          incoming().familyId == familyId &&
+          incoming().createdByUid == request.auth.uid &&
+          incoming().keys().hasAll(['familyId', 'title', 'startAtMs', 'recurrence', 'reminderMinutesBefore', 'participantUids', 'createdByUid', 'createdByName', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['familyId', 'title', 'description', 'startAtMs', 'endAtMs', 'recurrence', 'reminderMinutesBefore', 'participantUids', 'createdByUid', 'createdByName', 'createdAt', 'updatedAt']) &&
+          isValidCalendarEvent(incoming()) &&
+          isValidTimestamp(incoming().createdAt) &&
+          isValidTimestamp(incoming().updatedAt) &&
+          isFamilyMember(familyId);
+        allow update: if isSignedIn() && isValidId(eventId) &&
+          isValidCalendarEvent(incoming()) &&
+          isFamilyMember(familyId) &&
+          (existing().createdByUid == request.auth.uid || isFamilyAdmin(familyId)) &&
+          incoming().familyId == existing().familyId &&
+          incoming().createdByUid == existing().createdByUid &&
+          incoming().createdAt == existing().createdAt &&
+          isValidTimestamp(incoming().updatedAt) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['title', 'description', 'startAtMs', 'endAtMs', 'recurrence', 'reminderMinutesBefore', 'participantUids', 'updatedAt']);
+        allow delete: if isSignedIn() && isValidId(eventId) &&
+          (existing().createdByUid == request.auth.uid || isFamilyAdmin(familyId));
+      }
+
+      // 3i. Shared Family Tasks
+      match /tasks/{taskId} {
+        allow get: if isSignedIn() && isValidId(taskId) && isFamilyMember(familyId);
+        allow list: if isFamilyMember(familyId);
+        allow create: if isSignedIn() && isValidId(taskId) &&
+          incoming().familyId == familyId &&
+          incoming().createdByUid == request.auth.uid &&
+          incoming().keys().hasAll(['familyId', 'title', 'assignedToUid', 'assignedToName', 'priority', 'completed', 'createdByUid', 'createdByName', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['familyId', 'title', 'description', 'assignedToUid', 'assignedToName', 'priority', 'dueAtMs', 'completed', 'completedAtMs', 'completedByUid', 'createdByUid', 'createdByName', 'createdAt', 'updatedAt']) &&
+          isValidFamilyTask(incoming()) &&
+          isValidTimestamp(incoming().createdAt) &&
+          isValidTimestamp(incoming().updatedAt) &&
+          isFamilyMember(familyId);
+        allow update: if isSignedIn() && isValidId(taskId) &&
+          isValidFamilyTask(incoming()) &&
+          isFamilyMember(familyId) &&
+          incoming().familyId == existing().familyId &&
+          incoming().createdByUid == existing().createdByUid &&
+          incoming().createdAt == existing().createdAt &&
+          isValidTimestamp(incoming().updatedAt) && (
+            // Any family member can toggle completion
+            incoming().diff(existing()).affectedKeys().hasOnly(['completed', 'completedAtMs', 'completedByUid', 'updatedAt']) ||
+            // Creator or Admin can edit details
+            ((existing().createdByUid == request.auth.uid || isFamilyAdmin(familyId)) &&
+             incoming().diff(existing()).affectedKeys().hasOnly(['title', 'description', 'assignedToUid', 'assignedToName', 'priority', 'dueAtMs', 'completed', 'completedAtMs', 'completedByUid', 'updatedAt']))
+          );
+        allow delete: if isSignedIn() && isValidId(taskId) &&
+          (existing().createdByUid == request.auth.uid || isFamilyAdmin(familyId));
+      }
+
+      // 3j. Family Expense Manager (BDT)
+      match /expenses/{expenseId} {
+        allow get: if isSignedIn() && isValidId(expenseId) && isFamilyMember(familyId);
+        allow list: if isFamilyMember(familyId);
+        allow create: if isSignedIn() && isValidId(expenseId) &&
+          incoming().familyId == familyId &&
+          incoming().createdByUid == request.auth.uid &&
+          incoming().keys().hasAll(['familyId', 'title', 'category', 'amountBdt', 'paidByUid', 'paidByName', 'expenseDateMs', 'createdByUid', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['familyId', 'title', 'category', 'amountBdt', 'paidByUid', 'paidByName', 'expenseDateMs', 'notes', 'createdByUid', 'createdAt', 'updatedAt']) &&
+          isValidFamilyExpense(incoming()) &&
+          isValidTimestamp(incoming().createdAt) &&
+          isValidTimestamp(incoming().updatedAt) &&
+          isFamilyMember(familyId);
+        allow update: if isSignedIn() && isValidId(expenseId) &&
+          isValidFamilyExpense(incoming()) &&
+          isFamilyMember(familyId) &&
+          (existing().createdByUid == request.auth.uid || isFamilyAdmin(familyId)) &&
+          incoming().familyId == existing().familyId &&
+          incoming().createdByUid == existing().createdByUid &&
+          incoming().createdAt == existing().createdAt &&
+          isValidTimestamp(incoming().updatedAt) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['title', 'category', 'amountBdt', 'paidByUid', 'paidByName', 'expenseDateMs', 'notes', 'updatedAt']);
+        allow delete: if isSignedIn() && isValidId(expenseId) &&
+          (existing().createdByUid == request.auth.uid || isFamilyAdmin(familyId));
+      }
+
+      // 3k. Family Notice Board (Admin publishes; members acknowledge read)
+      match /notices/{noticeId} {
+        allow get: if isSignedIn() && isValidId(noticeId) && isFamilyMember(familyId);
+        allow list: if isFamilyMember(familyId);
+        allow create: if isFamilyAdmin(familyId) && isValidId(noticeId) &&
+          incoming().familyId == familyId &&
+          incoming().authorUid == request.auth.uid &&
+          incoming().keys().hasAll(['familyId', 'title', 'body', 'pinned', 'readByUids', 'authorUid', 'authorName', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['familyId', 'title', 'body', 'pinned', 'expiresAtMs', 'readByUids', 'authorUid', 'authorName', 'createdAt', 'updatedAt']) &&
+          isValidFamilyNotice(incoming()) &&
+          isValidTimestamp(incoming().createdAt) &&
+          isValidTimestamp(incoming().updatedAt);
+        allow update: if isSignedIn() && isValidId(noticeId) &&
+          isValidFamilyNotice(incoming()) &&
+          isFamilyMember(familyId) &&
+          incoming().familyId == existing().familyId &&
+          incoming().authorUid == existing().authorUid &&
+          incoming().createdAt == existing().createdAt &&
+          isValidTimestamp(incoming().updatedAt) && (
+            (isFamilyAdmin(familyId) &&
+             incoming().diff(existing()).affectedKeys().hasOnly(['title', 'body', 'pinned', 'expiresAtMs', 'readByUids', 'updatedAt'])) ||
+            (request.auth.uid in incoming().readByUids &&
+             incoming().readByUids.hasAll(existing().readByUids) &&
+             incoming().diff(existing()).affectedKeys().hasOnly(['readByUids', 'updatedAt']))
+          );
+        allow delete: if isFamilyAdmin(familyId) && isValidId(noticeId);
+      }
+
+      // 3l. Secure Family File Vault
+      match /vault_files/{fileId} {
+        allow get: if isSignedIn() && isValidId(fileId) &&
+          (request.auth.uid in existing().allowedUids || isFamilyAdmin(familyId));
+        allow list: if isSignedIn() &&
+          (request.auth.uid in existing().allowedUids || isFamilyAdmin(familyId));
+        allow create: if isSignedIn() && isValidId(fileId) &&
+          incoming().familyId == familyId &&
+          incoming().uploadedByUid == request.auth.uid &&
+          request.auth.uid in incoming().allowedUids &&
+          incoming().keys().hasAll(['familyId', 'title', 'folder', 'fileName', 'mimeType', 'fileSizeBytes', 'fileBase64', 'uploadedByUid', 'uploadedByName', 'allowedUids', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['familyId', 'title', 'folder', 'fileName', 'mimeType', 'fileSizeBytes', 'fileBase64', 'uploadedByUid', 'uploadedByName', 'allowedUids', 'createdAt', 'updatedAt']) &&
+          isValidVaultFile(incoming()) &&
+          isValidTimestamp(incoming().createdAt) &&
+          isValidTimestamp(incoming().updatedAt) &&
+          isFamilyMember(familyId);
+        allow update: if isSignedIn() && isValidId(fileId) &&
+          isValidVaultFile(incoming()) &&
+          (existing().uploadedByUid == request.auth.uid || isFamilyAdmin(familyId)) &&
+          incoming().familyId == existing().familyId &&
+          incoming().uploadedByUid == existing().uploadedByUid &&
+          incoming().createdAt == existing().createdAt &&
+          isValidTimestamp(incoming().updatedAt) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['title', 'folder', 'allowedUids', 'updatedAt']);
+        allow delete: if isSignedIn() && isValidId(fileId) &&
+          (existing().uploadedByUid == request.auth.uid || isFamilyAdmin(familyId));
+      }
+    }
+  }
+}

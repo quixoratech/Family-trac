@@ -1,0 +1,13 @@
+<resources>
+    <string name="app_name">FamilyTrack BD</string>
+    <string name="notif_channel_location_name">Location Sharing Status</string>
+    <string name="notif_channel_location_desc">Shows when consent-based location sharing is active.</string>
+    <string name="notif_channel_messages_name">Family Messages</string>
+    <string name="notif_channel_messages_desc">Notifications for new family chat, media, and voice messages.</string>
+    <string name="notif_channel_calls_name">Voice Calls</string>
+    <string name="notif_channel_calls_desc">Incoming family voice call alerts.</string>
+    <string name="notif_channel_games_name">Family Games</string>
+    <string name="notif_channel_games_desc">Tic-Tac-Toe invites and turn updates.</string>
+    <string name="notif_channel_hub_name">Family Hub &amp; Alerts</string>
+    <string name="notif_channel_hub_desc">Announcements, tasks, calendar reminders, and device alerts.</string>
+</resources>
